@@ -1,0 +1,499 @@
+import pathlib
+import sys
+from google.adk import Agent
+from google.adk.skills import load_skill_from_dir, models
+from google.adk.tools.skill_toolset import SkillToolset
+
+seo_skill = models.Skill(
+    frontmatter=models.Frontmatter(
+        name="seo-checklist",
+        description=(
+            "SEO optimization checklist for blog posts. Covers title tags,"
+            " meta descriptions, heading structure, keyword placement,"
+            " and readability best practices."
+        ),
+    ),
+    instructions=(
+        "When optimizing a blog post for SEO, check each item:\n\n"
+        "1. **Title**: 50-60 chars, primary keyword near the start\n"
+        "2. **Meta description**: 150-160 chars, includes a call-to-action\n"
+        "3. **Headings**: H2/H3 hierarchy, keywords in 2-3 headings\n"
+        "4. **First paragraph**: Primary keyword in first 100 words\n"
+        "5. **Keyword density**: 1-2%, never forced or awkward\n"
+        "6. **Paragraphs**: 2-3 sentences max, use bullet lists often\n"
+        "7. **Links**: 2-3 internal + 3-5 external to authoritative sources\n"
+        "8. **Images**: Alt text with keywords, compressed, descriptive names\n"
+        "9. **URL slug**: Short, keyword-rich, hyphenated\n\n"
+        "Review the content against each item and suggest specific improvements."
+    ),
+)
+
+SKILLS_PATH = pathlib.Path(__file__).parent / "skills"
+
+def _load_skill(name: str):
+    path = SKILLS_PATH / name
+    if not path.exists():
+        print(f"Warning: Skill directory '{name}' not found at {path}", file=sys.stderr)
+    return load_skill_from_dir(path)
+
+blog_writer_skill = _load_skill("blog-writer")
+
+skill_creator = models.Skill(
+    frontmatter=models.Frontmatter(
+        name="skill-creator",
+        description=(
+            "Creates new ADK-compatible skill definitions from requirements."
+            " Generates complete SKILL.md files following the Agent Skills"
+            " specification at agentskills.io."
+        ),
+    ),
+    instructions=(
+        "When asked to create a new skill, generate a complete SKILL.md file.\n\n"
+        "Read `references/skill-spec.md` for the format specification.\n"
+        "Read `references/example-skill.md` for a working example.\n\n"
+        "Follow these rules:\n"
+        "1. Name must be kebab-case, max 64 characters\n"
+        "2. Description must be under 1024 characters\n"
+        "3. Instructions should be clear, step-by-step\n"
+        "4. Reference files in references/ for detailed domain knowledge\n"
+        "5. Keep SKILL.md under 500 lines — put details in references/\n"
+        "6. Output the complete file content the user can save directly\n"
+    ),
+    resources=models.Resources(
+        references={
+            "skill-spec.md": (
+                "# Agent Skills Specification (agentskills.io)\n\n"
+                "## SKILL.md Format\n"
+                "Every skill directory must contain a SKILL.md file.\n\n"
+                "### Frontmatter (YAML)\n"
+                "```yaml\n"
+                "---\n"
+                "name: my-skill-name          # kebab-case, max 64 chars\n"
+                "description: What this skill does.  # max 1024 chars\n"
+                "---\n"
+                "```\n\n"
+                "### Body (Markdown)\n"
+                "The body contains the skill instructions. Write clear,\n"
+                "step-by-step instructions the agent will follow.\n\n"
+                "### Directory Structure\n"
+                "```\n"
+                "my-skill-name/\n"
+                "  SKILL.md           # Required: metadata + instructions\n"
+                "  references/        # Optional: detailed reference docs\n"
+                "  assets/            # Optional: templates, data files\n"
+                "  scripts/           # Optional: executable scripts\n"
+                "```\n\n"
+                "### Key Rules\n"
+                "- Directory name MUST match the `name` field in frontmatter\n"
+                "- Name must be kebab-case: ^[a-z0-9]+(-[a-z0-9]+)*$\n"
+                "- Description is what the LLM uses to decide when to load the skill\n"
+                "- Keep instructions actionable — tell the agent WHAT to do\n"
+                "- Use `load_skill_resource` references for detailed docs\n"
+            ),
+            "example-skill.md": (
+                "# Example: Code Review Skill\n\n"
+                "```markdown\n"
+                "---\n"
+                "name: code-review\n"
+                "description: Reviews Python code for correctness, style, "
+                "and performance. Checks for common bugs, PEP 8 compliance, "
+                "and suggests optimizations.\n"
+                "---\n\n"
+                "# Code Review Instructions\n\n"
+                "When asked to review code:\n\n"
+                "## Step 1: Read the Guidelines\n"
+                "Use `load_skill_resource` to read `references/review-checklist.md`.\n\n"
+                "## Step 2: Analyze\n"
+                "Check the code against each item in the checklist.\n\n"
+                "## Step 3: Report\n"
+                "Provide findings organized by severity:\n"
+                "- **Critical**: Bugs, security issues\n"
+                "- **Warning**: Style violations, performance concerns\n"
+                "- **Info**: Suggestions for improvement\n"
+                "```\n"
+            ),
+        }
+    ),
+)
+
+skill_toolset = SkillToolset(
+    skills=[
+        seo_skill,
+        blog_writer_skill,
+        skill_creator,
+    ]
+)
+
+root_agent = Agent(
+    model="gemini-3.5-flash",
+    name="blog_skills_agent",
+    description="A blog-writing agent powered by reusable skills.",
+    instruction=(
+        "You are a blog-writing assistant with specialized skills.\n\n"
+        "You have three skills available:\n"
+        "- **seo-checklist**: SEO optimization rules (load for SEO review)\n"
+        "- **blog-writer**: Writing structure and style guide (load for writing)\n"
+        "- **skill-creator**: Generate new skill definitions (load to create skills)\n\n"
+        "When the user asks you to write, research, or optimize a blog post:\n"
+        "1. Load the relevant skill(s) to get detailed instructions\n"
+        "2. Use `load_skill_resource` to access reference materials\n"
+        "3. Follow the skill's step-by-step instructions\n"
+        "4. Apply multiple skills together when appropriate\n\n"
+        "When the user asks you to create a new skill:\n"
+        "1. Load the skill-creator skill\n"
+        "2. Read the specification and example references\n"
+        "3. Generate a complete SKILL.md that follows the spec\n\n"
+        "Always explain which skill you're using and why."
+    ),
+    tools=[skill_toolset],
+)
+
+
+
+
+
+Create your ADK Agent with inline skills
+Use adk create to create an agent called seo_skills_agent:
+
+adk create seo_skills_agent
+Copied!
+To use the default model for the root agent, enter 1 and press ENTER.
+
+To use Vertex AI as the model provider, enter 2 and press ENTER.
+
+To use the default GCP Project ID, press ENTER.
+
+In Enter Google Cloud region, enter global then press ENTER.
+
+An agent is created in ~/seo_skills_agent with the following structure:
+
+├── .env
+├── __init__.py
+└── agent.py
+Click on the pencil icon in the top right corner of the screen to open the Cloud Shell Editor, and open the file ~/seo_skills_agent/agent.py.
+
+Replace the existing imports to add all the imports that you will need:
+
+import pathlib
+import sys
+from google.adk import Agent
+from google.adk.skills import load_skill_from_dir, models
+from google.adk.tools.skill_toolset import SkillToolset
+Copied!
+Add a new inline skill that will check the content of the blog post for SEO optimization:
+
+seo_skill = models.Skill(
+    frontmatter=models.Frontmatter(
+        name="seo-checklist",
+        description=(
+            "SEO optimization checklist for blog posts. Covers title tags,"
+            " meta descriptions, heading structure, keyword placement,"
+            " and readability best practices."
+        ),
+    ),
+    instructions=(
+        "When optimizing a blog post for SEO, check each item:\n\n"
+        "1. **Title**: 50-60 chars, primary keyword near the start\n"
+        "2. **Meta description**: 150-160 chars, includes a call-to-action\n"
+        "3. **Headings**: H2/H3 hierarchy, keywords in 2-3 headings\n"
+        "4. **First paragraph**: Primary keyword in first 100 words\n"
+        "5. **Keyword density**: 1-2%, never forced or awkward\n"
+        "6. **Paragraphs**: 2-3 sentences max, use bullet lists often\n"
+        "7. **Links**: 2-3 internal + 3-5 external to authoritative sources\n"
+        "8. **Images**: Alt text with keywords, compressed, descriptive names\n"
+        "9. **URL slug**: Short, keyword-rich, hyphenated\n\n"
+        "Review the content against each item and suggest specific improvements."
+    ),
+)
+Copied!
+Add a skill_toolset with the skill you just created:
+
+skill_toolset = SkillToolset(
+    skills=[
+        seo_skill
+    ]
+)
+Copied!
+Modify the root agent to use the skill_toolset:
+
+root_agent = Agent(
+    model="gemini-3.5-flash",
+    name="blog_skills_agent",
+    description="A blog-writing agent powered by reusable skills.",
+    instruction=(
+        "You are a blog-writing assistant with specialized skills.\n\n"
+        "You have one skill available:\n"
+        "- **seo-checklist**: SEO optimization rules (load for SEO review)\n\n"
+        "Always explain which skill you're using and why."
+    ),
+    tools=[skill_toolset],
+)
+Copied!
+Click on Open Console and make sure you are in your home directory.
+
+cd ~
+Copied!
+Launch the ADK Dev UI with the following command with some useful flags. This command will:
+
+Launch a Fast API web server with the ADK Dev UI
+Allow the Cloud Shell web preview to query your agent
+Send telemetry data to Cloud Logging
+Reload agents when code changes are detected
+adk web \
+--allow_origins "regex:https://.*\.cloudshell\.dev" \
+--reload_agents
+Copied!
+Output:
+
+INFO:     Started server process [2434]
+INFO:     Waiting for application startup.
++-------------------------------------------------------+
+| ADK Web Server started                                |
+|                                                       |
+| For local testing, access at http://localhost:8000.   |
++-------------------------------------------------------+
+
+INFO: Application startup complete.
+INFO: Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+The terminal displays the ADK Dev UI URL.
+
+To view the web interface, click the http://127.0.0.1:8000 link in the terminal output. This opens the Dev UI in a new tab.
+
+Click Select an agent and select seo_skills_agent.
+
+In the chat input box, enter the following prompt to query your agent:
+
+Can you review the following post for SEO-optimization?
+
+##  Getting Started with Kubernetes
+
+Kubernetes, often abbreviated as K8s, is an open-source container orchestration platform designed to automate the deployment, scaling, and management of containerized applications. 
+
+In today's cloud-native landscape, understanding Kubernetes is becoming increasingly essential for developers and operations teams alike. To begin your Kubernetes journey, it's crucial to grasp fundamental concepts such as Pods, Deployments, Services, and Namespaces. 
+
+Experiment with deploying a simple application, exposing it as a service, and scaling it up and down. Embrace the learning process, and soon you'll be harnessing the full power of Kubernetes to deploy resilient and scalable applications.
+Copied!
+Verify that the response uses the seo-checklist inline skill.
+
+To verify that the agent handles unsupported requests gracefully, enter the following prompt in the chat input box:
+
+Can you use your video-editing skill to create a thumbnail?
+Copied!
+Task 2. Add file-based skills to your agent
+Inline skills work well for simple checklists. But if your skill needs reference documents (a style guide, an API spec), you need a directory.
+
+In this task you will create a file-based skill for a style-guide. A file-based skill lives in its own directory with a SKILL.md file and optional subdirectories for references, assets, and scripts. The SKILL.md starts with YAML frontmatter, followed by Markdown instructions.
+
+skills/blog-writer/
+├── SKILL.md           # L2: Instructions
+└── references/
+    └── style-guide.md # L3: Loaded on demand
+Select the Cloud Shell Terminal pane and press CTRL+C to stop the ADK Dev UI.
+
+Run the following in Cloud Shell Terminal to download a pair of example skills from a Cloud Storage bucket into the seo_skills_agent directory.
+
+gcloud storage cp -r gs://qwiklabs-gcp-03-6fba61c683e9-bucket/* seo_skills_agent
+Copied!
+Open the Editor and navigate to the agent.py file. After the seo_skill definition, add a function to load skills from the skills directory.
+
+SKILLS_PATH = pathlib.Path(__file__).parent / "skills"
+
+def _load_skill(name: str):
+    path = SKILLS_PATH / name
+    if not path.exists():
+        print(f"Warning: Skill directory '{name}' not found at {path}", file=sys.stderr)
+    return load_skill_from_dir(path)
+Copied!
+Paste the following into agent.py to load a blog-writer skill.
+
+blog_writer_skill = _load_skill("blog-writer")
+Copied!
+Add the blog-writer skill to the skill_toolset by replacing the existing definition of skill_toolset with the following:
+
+skill_toolset = SkillToolset(
+    skills=[
+        seo_skill,
+        blog_writer_skill,
+    ]
+)
+Copied!
+In the Cloud Console, restart the ADK Dev UI.
+
+adk web \
+--allow_origins "regex:https://.*\.cloudshell\.dev" \
+--reload_agents
+Copied!
+Click the link to open the interface and select the seo_skills_agent.
+
+Test the blog-writer and the seo-checklist skills with following prompt.
+
+Use your blog-writer skill to write a short post about Python async programming. Then reflect on that post using your seo-checklist skill.
+Copied!
+Assessment Completed!
+Download starter skills from Cloud Storage bucket.
+Assessment Completed!
+Task 3. Add Meta Skills - a skill that creates new skills
+In this task, you add a new skill to the agent, the skill-creator skill. This skill is a meta-skill that can create new skills. This is best for self-extending agents that generate new capabilities on demand.
+
+Select the Cloud Shell Terminal pane and press CTRL+C to stop the ADK Dev UI.
+
+Open the Editor and navigate to the agent.py file. After the blog_writer_skill definition, add the skill_creator skill.
+
+skill_creator = models.Skill(
+    frontmatter=models.Frontmatter(
+        name="skill-creator",
+        description=(
+            "Creates new ADK-compatible skill definitions from requirements."
+            " Generates complete SKILL.md files following the Agent Skills"
+            " specification at agentskills.io."
+        ),
+    ),
+    instructions=(
+        "When asked to create a new skill, generate a complete SKILL.md file.\n\n"
+        "Read `references/skill-spec.md` for the format specification.\n"
+        "Read `references/example-skill.md` for a working example.\n\n"
+        "Follow these rules:\n"
+        "1. Name must be kebab-case, max 64 characters\n"
+        "2. Description must be under 1024 characters\n"
+        "3. Instructions should be clear, step-by-step\n"
+        "4. Reference files in references/ for detailed domain knowledge\n"
+        "5. Keep SKILL.md under 500 lines — put details in references/\n"
+        "6. Output the complete file content the user can save directly\n"
+    ),
+    resources=models.Resources(
+        references={
+            "skill-spec.md": (
+                "# Agent Skills Specification (agentskills.io)\n\n"
+                "## SKILL.md Format\n"
+                "Every skill directory must contain a SKILL.md file.\n\n"
+                "### Frontmatter (YAML)\n"
+                "```yaml\n"
+                "---\n"
+                "name: my-skill-name          # kebab-case, max 64 chars\n"
+                "description: What this skill does.  # max 1024 chars\n"
+                "---\n"
+                "```\n\n"
+                "### Body (Markdown)\n"
+                "The body contains the skill instructions. Write clear,\n"
+                "step-by-step instructions the agent will follow.\n\n"
+                "### Directory Structure\n"
+                "```\n"
+                "my-skill-name/\n"
+                "  SKILL.md           # Required: metadata + instructions\n"
+                "  references/        # Optional: detailed reference docs\n"
+                "  assets/            # Optional: templates, data files\n"
+                "  scripts/           # Optional: executable scripts\n"
+                "```\n\n"
+                "### Key Rules\n"
+                "- Directory name MUST match the `name` field in frontmatter\n"
+                "- Name must be kebab-case: ^[a-z0-9]+(-[a-z0-9]+)*$\n"
+                "- Description is what the LLM uses to decide when to load the skill\n"
+                "- Keep instructions actionable — tell the agent WHAT to do\n"
+                "- Use `load_skill_resource` references for detailed docs\n"
+            ),
+            "example-skill.md": (
+                "# Example: Code Review Skill\n\n"
+                "```markdown\n"
+                "---\n"
+                "name: code-review\n"
+                "description: Reviews Python code for correctness, style, "
+                "and performance. Checks for common bugs, PEP 8 compliance, "
+                "and suggests optimizations.\n"
+                "---\n\n"
+                "# Code Review Instructions\n\n"
+                "When asked to review code:\n\n"
+                "## Step 1: Read the Guidelines\n"
+                "Use `load_skill_resource` to read `references/review-checklist.md`.\n\n"
+                "## Step 2: Analyze\n"
+                "Check the code against each item in the checklist.\n\n"
+                "## Step 3: Report\n"
+                "Provide findings organized by severity:\n"
+                "- **Critical**: Bugs, security issues\n"
+                "- **Warning**: Style violations, performance concerns\n"
+                "- **Info**: Suggestions for improvement\n"
+                "```\n"
+            ),
+        }
+    ),
+)
+Copied!
+Update the skill_toolset to include the skill_creator skill:
+
+skill_toolset = SkillToolset(
+    skills=[
+        seo_skill,
+        blog_writer_skill,
+        skill_creator,
+    ]
+)
+Copied!
+Edit the root_agent to provide updated guidance.
+
+root_agent = Agent(
+    model="gemini-3.5-flash",
+    name="blog_skills_agent",
+    description="A blog-writing agent powered by reusable skills.",
+    instruction=(
+        "You are a blog-writing assistant with specialized skills.\n\n"
+        "You have three skills available:\n"
+        "- **seo-checklist**: SEO optimization rules (load for SEO review)\n"
+        "- **blog-writer**: Writing structure and style guide (load for writing)\n"
+        "- **skill-creator**: Generate new skill definitions (load to create skills)\n\n"
+        "When the user asks you to write, research, or optimize a blog post:\n"
+        "1. Load the relevant skill(s) to get detailed instructions\n"
+        "2. Use `load_skill_resource` to access reference materials\n"
+        "3. Follow the skill's step-by-step instructions\n"
+        "4. Apply multiple skills together when appropriate\n\n"
+        "When the user asks you to create a new skill:\n"
+        "1. Load the skill-creator skill\n"
+        "2. Read the specification and example references\n"
+        "3. Generate a complete SKILL.md that follows the spec\n\n"
+        "Always explain which skill you're using and why."
+    ),
+    tools=[skill_toolset],
+)
+Copied!
+In the Cloud Console, restart the ADK Dev UI.
+
+adk web \
+--allow_origins "regex:https://.*\.cloudshell\.dev" \
+--reload_agents
+Copied!
+Open the interface, create a new session, and test the skill_creator skill with the following prompt.
+
+I need a new skill for reviewing Python code for security vulnerabilities. Can you create content for a SKILL.md?
+Copied!
+Task 4. Publish Skills to Skills Registry
+Skill Registry serves as a secure, private, and low-latency repository for managing agent skills. Each skill is a self-contained package, including structural instructions, executable code, and documentation, designed to extend an agent's capabilities.
+
+In this task, you will upload a skill to the Skills Registry for use across your organization. To use it from your agent, you will have to download it to the skills folder and reference it in your agent.
+
+Select the Cloud Shell Terminal pane and press CTRL+C to stop the ADK Dev UI.
+
+Create a zip file of the content-research-writer skill folder by running the following in the Terminal:
+
+zip -r skill.zip seo_skills_agent/skills/content-research-writer/ && base64 -w 0 -i skill.zip
+Copied!
+Encode the zip file into a variable.
+
+ZIP_BASE64=$(base64 -i skill.zip | tr -d '\n')
+Copied!
+Upload the skill to the Skills Registry.
+
+curl -X POST \
+  -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"displayName\": \"Content research writer\",
+    \"description\": \"Content research and SEO writing methodology. Guides the agent through topic research, keyword identification, competitive analysis, and writing SEO-optimized content that ranks well and provides genuine value to readers.\",
+    \"zippedFilesystem\": \"$ZIP_BASE64\"
+  }" \
+  "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/qwiklabs-gcp-03-6fba61c683e9/locations/us-central1/skills?skillId=content-research-writer"
+Copied!
+List all skills in the Skills Registry.
+
+curl -X GET \
+  -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+  "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/qwiklabs-gcp-03-6fba61c683e9/locations/us-central1/skills"
+Copied!
+Review the Skills Registry documentation to learn more about creating, managing, and retrieving skills.
